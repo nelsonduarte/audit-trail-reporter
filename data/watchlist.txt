@@ -1,0 +1,10 @@
+# Audit Trail Reporter - watchlist prefixes
+#
+# One prefix per line. Any destination account whose name starts
+# with any of these prefixes is flagged Critical regardless of
+# amount. Lines starting with `#` are comments; blank lines are
+# ignored.
+
+acc-WATCHLIST
+acc-SANCTIONED
+acc-FROZEN

@@ -1,0 +1,125 @@
+// aggregation.capa
+//
+// Reduces a list of classified transactions into the two
+// aggregate views the sinks consume:
+//
+//   - DailyAggregate: (day, category) -> (count, total)
+//   - AccountSummary: per source account, total volume and
+//                     worst-case risk
+//
+// Pure. No I/O.
+
+import domain
+import capa_datetime.datetime
+
+// =========================================================
+// Daily aggregates
+// =========================================================
+//
+// Group by (day, category). Insertion order is preserved so
+// the sinks produce deterministic output (Capa's Map type is a
+// dict under the hood, and dicts are insertion-ordered).
+
+pub fun daily_aggregates(classified: List<ClassifiedTx>) -> List<DailyAggregate>
+    var counts: Map<String, Int> = new_map()
+    var sums: Map<String, Float> = new_map()
+    var keys: List<String> = []
+    for c in classified
+        let day = format_date(c.tx.timestamp_secs)
+        let cat = risk_name(c.risk)
+        let key = "${day}|${cat}"
+        if not counts.contains_key(key)
+            keys.push(key)
+            counts.set(key, 0)
+            sums.set(key, 0.0)
+        let cur_count = match counts.get(key)
+            Some(n) -> n
+            None    -> 0
+        counts.set(key, cur_count + 1)
+        let cur_sum = match sums.get(key)
+            Some(s) -> s
+            None    -> 0.0
+        sums.set(key, cur_sum + c.tx.amount)
+    var out: List<DailyAggregate> = []
+    for key in keys
+        let parts = key.split("|")
+        let day = match parts.get(0)
+            Some(d) -> d
+            None    -> "?"
+        let cat = match parts.get(1)
+            Some(c) -> c
+            None    -> "?"
+        let n = match counts.get(key)
+            Some(v) -> v
+            None    -> 0
+        let total = match sums.get(key)
+            Some(v) -> v
+            None    -> 0.0
+        out.push(DailyAggregate {
+            day: day,
+            category: cat,
+            count: n,
+            total_amount: total
+        })
+    return out
+
+// =========================================================
+// Account summaries
+// =========================================================
+//
+// Per source account: total volume, transaction count, how many
+// of those were flagged (risk >= High), and the worst-case risk.
+
+pub fun account_summaries(classified: List<ClassifiedTx>) -> List<AccountSummary>
+    var totals: Map<String, Float> = new_map()
+    var counts: Map<String, Int> = new_map()
+    var flagged: Map<String, Int> = new_map()
+    var worst: Map<String, RiskCategory> = new_map()
+    var accounts: List<String> = []
+    for c in classified
+        let acct = c.tx.from_account
+        if not totals.contains_key(acct)
+            accounts.push(acct)
+            totals.set(acct, 0.0)
+            counts.set(acct, 0)
+            flagged.set(acct, 0)
+            worst.set(acct, Low)
+        let cur_total = match totals.get(acct)
+            Some(v) -> v
+            None    -> 0.0
+        totals.set(acct, cur_total + c.tx.amount)
+        let cur_count = match counts.get(acct)
+            Some(v) -> v
+            None    -> 0
+        counts.set(acct, cur_count + 1)
+        if risk_rank(c.risk) >= risk_rank(High)
+            let cur_flagged = match flagged.get(acct)
+                Some(v) -> v
+                None    -> 0
+            flagged.set(acct, cur_flagged + 1)
+        let prev_worst = match worst.get(acct)
+            Some(v) -> v
+            None    -> Low
+        worst.set(acct, max_risk(prev_worst, c.risk))
+    var out: List<AccountSummary> = []
+    for acct in accounts
+        let total = match totals.get(acct)
+            Some(v) -> v
+            None    -> 0.0
+        let n = match counts.get(acct)
+            Some(v) -> v
+            None    -> 0
+        let nf = match flagged.get(acct)
+            Some(v) -> v
+            None    -> 0
+        let w = match worst.get(acct)
+            Some(v) -> v
+            None    -> Low
+        out.push(AccountSummary {
+            account: acct,
+            total_sent: total,
+            tx_count: n,
+            flagged_count: nf,
+            max_risk: w
+        })
+    return out

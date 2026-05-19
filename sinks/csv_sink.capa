@@ -1,0 +1,23 @@
+// sinks/csv_sink.capa
+//
+// Writes the daily-aggregate view as CSV. Declared [Fs] for the
+// single write call; otherwise pure string concatenation.
+
+import domain
+
+pub fun render_aggregates_csv(aggs: List<DailyAggregate>) -> String
+    var out = "day,category,count,total_amount\n"
+    for a in aggs
+        out = out + "${a.day},${a.category},${a.count},${a.total_amount}\n"
+    return out
+
+pub fun render_accounts_csv(summaries: List<AccountSummary>) -> String
+    var out = "account,tx_count,total_sent,flagged_count,max_risk\n"
+    for s in summaries
+        out = out + "${s.account},${s.tx_count},${s.total_sent},${s.flagged_count},${risk_name(s.max_risk)}\n"
+    return out
+
+pub fun write_csv(fs: Fs, path: String, body: String) -> Result<Unit, ReportError>
+    match fs.write(path, body)
+        Ok(_)  -> return Ok(())
+        Err(_) -> return Err(IoFailed("cannot write '${path}'"))

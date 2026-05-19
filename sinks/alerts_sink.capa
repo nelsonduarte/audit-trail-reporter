@@ -1,0 +1,37 @@
+// sinks/alerts_sink.capa
+//
+// Human-readable alert file. One block per flagged transaction,
+// listing every rule that fired and what it said. Designed to be
+// the artefact an on-call analyst opens first.
+
+import domain
+
+pub fun render_alerts(generated_at: String, classified: List<ClassifiedTx>) -> String
+    var flagged_count = 0
+    for c in classified
+        if not c.findings.is_empty()
+            flagged_count = flagged_count + 1
+    var out = "Audit Trail Reporter - ${generated_at}\n"
+    out = out + "${flagged_count} flagged transaction(s)\n"
+    out = out + "================================================\n\n"
+    if flagged_count == 0
+        out = out + "No transactions matched any rule. Baseline volume only.\n"
+        return out
+    var idx = 0
+    for c in classified
+        if c.findings.is_empty()
+            continue
+        idx = idx + 1
+        out = out + "[${idx}] ${c.tx.id}  risk=${risk_name(c.risk)}\n"
+        out = out + "    ${c.tx.amount} ${c.tx.currency}  ${c.tx.kind}\n"
+        out = out + "    ${c.tx.from_account} -> ${c.tx.to_account}\n"
+        out = out + "    Findings:\n"
+        for f in c.findings
+            out = out + "      - [${f.rule_name}] ${f.reason}\n"
+        out = out + "\n"
+    return out
+
+pub fun write_alerts(fs: Fs, path: String, body: String) -> Result<Unit, ReportError>
+    match fs.write(path, body)
+        Ok(_)  -> return Ok(())
+        Err(_) -> return Err(IoFailed("cannot write '${path}'"))

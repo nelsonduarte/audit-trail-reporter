@@ -1,0 +1,115 @@
+// domain.capa
+//
+// Shared domain types. Imported by every other module so the
+// vocabulary stays consistent end-to-end. Zero capabilities,
+// pure data + simple helpers.
+
+// =========================================================
+// Transactions
+// =========================================================
+
+pub type Transaction {
+    id: String,
+    timestamp_secs: Float,
+    amount: Float,
+    currency: String,
+    from_account: String,
+    to_account: String,
+    kind: String           // "card" | "transfer" | "wire" | other
+}
+
+// =========================================================
+// Risk classification
+// =========================================================
+//
+// Ordered low -> high. ``rank`` lets the merge layer pick the
+// strongest verdict when multiple rules fire on the same
+// transaction.
+
+pub type RiskCategory =
+    Low
+    Medium
+    High
+    Critical
+
+pub fun risk_name(r: RiskCategory) -> String
+    return match r
+        Low      -> "Low"
+        Medium   -> "Medium"
+        High     -> "High"
+        Critical -> "Critical"
+
+pub fun risk_rank(r: RiskCategory) -> Int
+    return match r
+        Low      -> 0
+        Medium   -> 1
+        High     -> 2
+        Critical -> 3
+
+pub fun max_risk(a: RiskCategory, b: RiskCategory) -> RiskCategory
+    if risk_rank(a) >= risk_rank(b)
+        return a
+    return b
+
+// =========================================================
+// Findings (one per rule hit)
+// =========================================================
+//
+// A Finding is what a rule emits when it decides a transaction
+// is interesting. Multiple findings on the same tx get merged
+// downstream into a single ClassifiedTx with the strongest
+// risk and a combined reason.
+
+pub type Finding {
+    tx_id: String,
+    risk: RiskCategory,
+    reason: String,
+    rule_name: String      // "threshold" | "watchlist" | "structuring" | "velocity"
+}
+
+// =========================================================
+// Final classification (post-merge)
+// =========================================================
+
+pub type ClassifiedTx {
+    tx: Transaction,
+    risk: RiskCategory,
+    findings: List<Finding>    // empty list = no rule fired, baseline risk only
+}
+
+// =========================================================
+// Aggregates
+// =========================================================
+
+pub type DailyAggregate {
+    day: String,           // YYYY-MM-DD
+    category: String,      // risk_name
+    count: Int,
+    total_amount: Float
+}
+
+pub type AccountSummary {
+    account: String,
+    total_sent: Float,
+    tx_count: Int,
+    flagged_count: Int,
+    max_risk: RiskCategory
+}
+
+// =========================================================
+// Errors + Options
+// =========================================================
+
+pub type ReportError =
+    JsonError(String)
+    IoFailed(String)
+    BadArgs(String)
+
+pub type Options {
+    input_path: String,
+    watchlist_path: String,     // "" = use built-in default prefixes
+    output_dir: String,
+    min_amount: Float,
+    target_day: String,         // "" = no filter
+    verbose: Bool
+}

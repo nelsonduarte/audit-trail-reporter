@@ -1,0 +1,228 @@
+// rules.capa
+//
+// The detection rule set. Each rule is a pure function:
+//
+//     fun rule_x(txs: List<Transaction>, ...config) -> List<Finding>
+//
+// No I/O, no clock, no random. A reviewer reading a rule sees
+// only the policy expressed as Capa code, with no side channel.
+//
+// v1 rules:
+//   - threshold:   amount-based (per transaction)
+//   - watchlist:   destination prefix match (per transaction)
+//   - structuring: ≥3 transactions in a day from one source,
+//                  each under the critical threshold, summing
+//                  over it (classic smurfing pattern)
+//   - velocity:    an account whose daily count spikes well
+//                  above its own dataset baseline
+
+import domain
+import capa_datetime.datetime
+
+// =========================================================
+// Policy constants
+// =========================================================
+
+pub const CRITICAL_AMOUNT: Float = 10000.0
+pub const HIGH_AMOUNT:     Float = 1000.0
+pub const MEDIUM_AMOUNT:   Float = 100.0
+
+// Structuring: at least N small transactions from the same
+// source on the same day, totalling at least the critical
+// threshold, with every individual amount under it.
+pub const STRUCTURING_MIN_COUNT: Int = 3
+
+// Velocity: an account whose daily count peaks at N or more
+// despite a baseline median of M or less. Tuned so a quiet
+// account that suddenly does 8 transactions in one day fires;
+// a busy account doing its usual 6/day does not.
+pub const VELOCITY_PEAK:     Int = 5
+pub const VELOCITY_BASELINE: Int = 2
+
+// =========================================================
+// Threshold rule
+// =========================================================
+//
+// Pure per-transaction classification by amount. Low and
+// Medium are baseline categories the engine assigns when no
+// other rule fires; only High / Critical produce a Finding
+// here so the merge layer can tell "this rule says it's bad"
+// from "this transaction had no signal".
+
+pub fun threshold_rule(txs: List<Transaction>) -> List<Finding>
+    var out: List<Finding> = []
+    for tx in txs
+        if tx.amount >= CRITICAL_AMOUNT
+            out.push(Finding {
+                tx_id: tx.id,
+                risk: Critical,
+                reason: "amount ${tx.amount} >= ${CRITICAL_AMOUNT}",
+                rule_name: "threshold"
+            })
+        else
+            if tx.amount >= HIGH_AMOUNT
+                out.push(Finding {
+                    tx_id: tx.id,
+                    risk: High,
+                    reason: "amount ${tx.amount} >= ${HIGH_AMOUNT}",
+                    rule_name: "threshold"
+                })
+    return out
+
+// =========================================================
+// Watchlist rule
+// =========================================================
+//
+// A destination account whose name starts with any of the
+// supplied watchlist prefixes is automatically Critical, no
+// matter the amount. The reason captures the matched prefix
+// so the auditor sees which entry on the watchlist hit.
+
+pub fun watchlist_rule(txs: List<Transaction>, prefixes: List<String>) -> List<Finding>
+    var out: List<Finding> = []
+    for tx in txs
+        for p in prefixes
+            if tx.to_account.starts_with(p)
+                out.push(Finding {
+                    tx_id: tx.id,
+                    risk: Critical,
+                    reason: "destination '${tx.to_account}' matches watchlist prefix '${p}'",
+                    rule_name: "watchlist"
+                })
+                break
+    return out
+
+// =========================================================
+// Structuring rule
+// =========================================================
+//
+// Detects the classic smurfing pattern: a source account
+// splits a large transfer into many small ones to stay under
+// the reporting threshold. We flag a group when:
+//
+//   - count >= STRUCTURING_MIN_COUNT
+//   - sum of amounts >= CRITICAL_AMOUNT
+//   - every individual amount < CRITICAL_AMOUNT
+//
+// All transactions in the group are flagged Critical; the
+// reason cites the count and total so the analyst can verify.
+
+pub fun structuring_rule(txs: List<Transaction>) -> List<Finding>
+    // Group by (from_account, day). The value is the list of
+    // transactions in that group; we re-walk it to emit per-
+    // transaction findings once the group is judged.
+    var groups: Map<String, List<Transaction>> = new_map()
+    var key_order: List<String> = []
+    for tx in txs
+        let day = format_date(tx.timestamp_secs)
+        let key = "${tx.from_account}|${day}"
+        if not groups.contains_key(key)
+            key_order.push(key)
+            let empty: List<Transaction> = []
+            groups.set(key, empty)
+        let existing = match groups.get(key)
+            Some(lst) -> lst
+            None      -> []
+        existing.push(tx)
+
+    var out: List<Finding> = []
+    for key in key_order
+        let group = match groups.get(key)
+            Some(lst) -> lst
+            None      -> []
+        if group.length() < STRUCTURING_MIN_COUNT
+            continue
+        var total = 0.0
+        var max_amount = 0.0
+        for tx in group
+            total = total + tx.amount
+            if tx.amount > max_amount
+                max_amount = tx.amount
+        if total < CRITICAL_AMOUNT
+            continue
+        if max_amount >= CRITICAL_AMOUNT
+            // At least one tx in the group is already big enough
+            // to trip the threshold rule on its own. The
+            // threshold rule will flag it; the structuring story
+            // doesn't add information.
+            continue
+        for tx in group
+            out.push(Finding {
+                tx_id: tx.id,
+                risk: Critical,
+                reason: "structuring: ${group.length()} txs from '${tx.from_account}' on ${format_date(tx.timestamp_secs)} totalling ${total}, each under threshold",
+                rule_name: "structuring"
+            })
+    return out
+
+// =========================================================
+// Velocity rule
+// =========================================================
+//
+// For each source account, compute its per-day transaction
+// counts across the dataset. If the *peak* day count is
+// well above the account's typical day count, the peak day
+// is anomalous; flag every transaction on that peak day.
+//
+// "Typical" here is the median of the daily counts excluding
+// the peak. A real deployment would use a longer historical
+// window; this v1 uses the data we have.
+
+pub fun velocity_rule(txs: List<Transaction>) -> List<Finding>
+    // Build account -> day -> count.
+    var per_account: Map<String, Map<String, Int>> = new_map()
+    var accounts_seen: List<String> = []
+    for tx in txs
+        let day = format_date(tx.timestamp_secs)
+        if not per_account.contains_key(tx.from_account)
+            accounts_seen.push(tx.from_account)
+            let empty: Map<String, Int> = new_map()
+            per_account.set(tx.from_account, empty)
+        let day_map = match per_account.get(tx.from_account)
+            Some(m) -> m
+            None    -> new_map()
+        let cur = match day_map.get(day)
+            Some(n) -> n
+            None    -> 0
+        day_map.set(day, cur + 1)
+
+    var out: List<Finding> = []
+    for account in accounts_seen
+        let day_map = match per_account.get(account)
+            Some(m) -> m
+            None    -> new_map()
+        // Find the peak day + its count.
+        var peak_day = ""
+        var peak_count = 0
+        for pair in day_map.pairs()
+            let (day, count) = pair
+            if count > peak_count
+                peak_count = count
+                peak_day = day
+        if peak_count < VELOCITY_PEAK
+            continue
+        // Baseline: the count on the second-busiest day. A
+        // simple, robust proxy for "is the peak an outlier or
+        // just typical activity".
+        var baseline = 0
+        for pair in day_map.pairs()
+            let (day, count) = pair
+            if day == peak_day
+                continue
+            if count > baseline
+                baseline = count
+        if baseline > VELOCITY_BASELINE
+            continue
+        // Peak qualifies: flag every transaction on the peak day.
+        for tx in txs
+            if tx.from_account != account
+                continue
+            if format_date(tx.timestamp_secs) != peak_day
+                continue
+            out.push(Finding {
+                tx_id: tx.id,
+                risk: High,
+                reason: "velocity: ${peak_count} txs from '${account}' on ${peak_day}, baseline ${baseline}/day",
+                rule_name: "velocity"
+            })
+    return out

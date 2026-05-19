@@ -1,0 +1,69 @@
+// parsing.capa
+//
+// JSONL input: read a file, split on newlines, parse each line
+// into a Transaction. Errors are line-number tagged so an
+// operator can pinpoint a bad record.
+//
+// Declares only [Fs] for the file read; everything downstream is
+// pure JSON-on-string work.
+
+import domain
+import capa_datetime.datetime
+
+pub fun read_transactions(fs: Fs, path: String) -> Result<List<Transaction>, ReportError>
+    let body = match fs.read(path)
+        Ok(s)  -> s
+        Err(_) -> return Err(IoFailed("cannot read input '${path}'"))
+    var out: List<Transaction> = []
+    var line_no = 0
+    for line in body.split("\n")
+        line_no = line_no + 1
+        let trimmed = line.trim()
+        if trimmed.is_empty()
+            continue
+        let jv = match parse_json(trimmed)
+            Ok(v)  -> v
+            Err(e) -> return Err(JsonError("line ${line_no}: ${e}"))
+        let tx = parse_transaction(jv, line_no)?
+        out.push(tx)
+    return Ok(out)
+
+pub fun parse_transaction(jv: JsonValue, line_no: Int) -> Result<Transaction, ReportError>
+    let obj = match jv.as_object()
+        Some(o) -> o
+        None    -> return Err(JsonError("line ${line_no}: expected JSON object"))
+    let id        = extract_string(obj, "id", line_no)?
+    let ts_str    = extract_string(obj, "timestamp", line_no)?
+    let amount    = extract_num(obj, "amount", line_no)?
+    let currency  = extract_string(obj, "currency", line_no)?
+    let from_acct = extract_string(obj, "from", line_no)?
+    let to_acct   = extract_string(obj, "to", line_no)?
+    let kind      = extract_string(obj, "kind", line_no)?
+    let ts = match parse_iso8601(ts_str)
+        Ok(secs) -> secs
+        Err(_)   -> return Err(JsonError("line ${line_no}: invalid timestamp '${ts_str}'"))
+    return Ok(Transaction {
+        id: id,
+        timestamp_secs: ts,
+        amount: amount,
+        currency: currency,
+        from_account: from_acct,
+        to_account: to_acct,
+        kind: kind
+    })
+
+fun extract_string(obj: Map<String, JsonValue>, key: String, line_no: Int) -> Result<String, ReportError>
+    match obj.get(key)
+        None     -> return Err(JsonError("line ${line_no}: missing field '${key}'"))
+        Some(jv) ->
+            match jv.as_string()
+                Some(s) -> return Ok(s)
+                None    -> return Err(JsonError("line ${line_no}: field '${key}' must be a string"))
+
+fun extract_num(obj: Map<String, JsonValue>, key: String, line_no: Int) -> Result<Float, ReportError>
+    match obj.get(key)
+        None     -> return Err(JsonError("line ${line_no}: missing field '${key}'"))
+        Some(jv) ->
+            match jv.as_num()
+                Some(n) -> return Ok(n)
+                None    -> return Err(JsonError("line ${line_no}: field '${key}' must be a number"))

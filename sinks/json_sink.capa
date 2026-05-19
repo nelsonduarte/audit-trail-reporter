@@ -1,0 +1,82 @@
+// sinks/json_sink.capa
+//
+// Writes the full detailed report as a single JSON document
+// containing the run metadata, per-day aggregates, per-account
+// summaries, and the list of flagged transactions with their
+// findings. Declared [Fs] for the write; the rendering is pure.
+
+import domain
+
+pub fun render_report_json(
+    input_path: String,
+    watchlist_path: String,
+    generated_at: String,
+    classified: List<ClassifiedTx>,
+    aggs: List<DailyAggregate>,
+    summaries: List<AccountSummary>
+) -> String
+    var fields: Map<String, JsonValue> = new_map()
+    fields.set("report_generated_at", JStr(generated_at))
+    fields.set("input_path", JStr(input_path))
+    fields.set("watchlist_path", JStr(watchlist_path))
+    fields.set("total_transactions", JNum(to_float(classified.length())))
+
+    fields.set("aggregates", JArr(aggregates_to_json(aggs)))
+    fields.set("accounts", JArr(accounts_to_json(summaries)))
+    fields.set("flagged", JArr(flagged_to_json(classified)))
+    return to_json(JObj(fields))
+
+fun aggregates_to_json(aggs: List<DailyAggregate>) -> List<JsonValue>
+    var out: List<JsonValue> = []
+    for a in aggs
+        var row: Map<String, JsonValue> = new_map()
+        row.set("day", JStr(a.day))
+        row.set("category", JStr(a.category))
+        row.set("count", JNum(to_float(a.count)))
+        row.set("total_amount", JNum(a.total_amount))
+        out.push(JObj(row))
+    return out
+
+fun accounts_to_json(summaries: List<AccountSummary>) -> List<JsonValue>
+    var out: List<JsonValue> = []
+    for s in summaries
+        var row: Map<String, JsonValue> = new_map()
+        row.set("account", JStr(s.account))
+        row.set("tx_count", JNum(to_float(s.tx_count)))
+        row.set("total_sent", JNum(s.total_sent))
+        row.set("flagged_count", JNum(to_float(s.flagged_count)))
+        row.set("max_risk", JStr(risk_name(s.max_risk)))
+        out.push(JObj(row))
+    return out
+
+fun flagged_to_json(classified: List<ClassifiedTx>) -> List<JsonValue>
+    var out: List<JsonValue> = []
+    for c in classified
+        if c.findings.is_empty()
+            continue
+        var row: Map<String, JsonValue> = new_map()
+        row.set("id", JStr(c.tx.id))
+        row.set("amount", JNum(c.tx.amount))
+        row.set("currency", JStr(c.tx.currency))
+        row.set("from_account", JStr(c.tx.from_account))
+        row.set("to_account", JStr(c.tx.to_account))
+        row.set("kind", JStr(c.tx.kind))
+        row.set("final_risk", JStr(risk_name(c.risk)))
+        row.set("findings", JArr(findings_to_json(c.findings)))
+        out.push(JObj(row))
+    return out
+
+fun findings_to_json(findings: List<Finding>) -> List<JsonValue>
+    var out: List<JsonValue> = []
+    for f in findings
+        var row: Map<String, JsonValue> = new_map()
+        row.set("rule", JStr(f.rule_name))
+        row.set("risk", JStr(risk_name(f.risk)))
+        row.set("reason", JStr(f.reason))
+        out.push(JObj(row))
+    return out
+
+pub fun write_json(fs: Fs, path: String, body: String) -> Result<Unit, ReportError>
+    match fs.write(path, body)
+        Ok(_)  -> return Ok(())
+        Err(_) -> return Err(IoFailed("cannot write '${path}'"))

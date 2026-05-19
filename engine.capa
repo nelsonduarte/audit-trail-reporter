@@ -1,0 +1,91 @@
+// engine.capa
+//
+// Orchestrates the rule pipeline. Runs every rule against the
+// transaction list, merges per-tx findings into a single
+// ClassifiedTx, and applies filtering (min-amount, target day).
+//
+// Pure. No I/O. The engine is the place where policy is
+// composed; the rules themselves stay independent.
+
+import domain
+import rules
+import capa_datetime.datetime
+
+// =========================================================
+// Run all rules, merge findings
+// =========================================================
+
+pub fun classify_all(txs: List<Transaction>, watchlist: List<String>) -> List<ClassifiedTx>
+    // Collect findings keyed by tx_id. A single transaction may
+    // be hit by several rules; downstream we merge.
+    var by_tx: Map<String, List<Finding>> = new_map()
+
+    for f in threshold_rule(txs)
+        push_finding(by_tx, f)
+    for f in watchlist_rule(txs, watchlist)
+        push_finding(by_tx, f)
+    for f in structuring_rule(txs)
+        push_finding(by_tx, f)
+    for f in velocity_rule(txs)
+        push_finding(by_tx, f)
+
+    var out: List<ClassifiedTx> = []
+    for tx in txs
+        let findings = match by_tx.get(tx.id)
+            Some(lst) -> lst
+            None      -> []
+        out.push(merge_into_classified(tx, findings))
+    return out
+
+fun push_finding(by_tx: Map<String, List<Finding>>, f: Finding) -> Unit
+    if not by_tx.contains_key(f.tx_id)
+        let empty: List<Finding> = []
+        by_tx.set(f.tx_id, empty)
+    let existing = match by_tx.get(f.tx_id)
+        Some(lst) -> lst
+        None      -> []
+    existing.push(f)
+
+// Merge a transaction with the findings that hit it into one
+// ClassifiedTx. The final risk is the max across all findings,
+// or the baseline category (Low / Medium) when nothing fired.
+
+pub fun merge_into_classified(tx: Transaction, findings: List<Finding>) -> ClassifiedTx
+    if findings.is_empty()
+        let baseline = baseline_risk(tx)
+        return ClassifiedTx {
+            tx: tx,
+            risk: baseline,
+            findings: []
+        }
+    var top = Low
+    for f in findings
+        top = max_risk(top, f.risk)
+    return ClassifiedTx {
+        tx: tx,
+        risk: top,
+        findings: findings
+    }
+
+// Used when no rule fires: classify by amount alone.
+
+fun baseline_risk(tx: Transaction) -> RiskCategory
+    if tx.amount >= MEDIUM_AMOUNT
+        return Medium
+    return Low
+
+// =========================================================
+// Filtering
+// =========================================================
+
+pub fun apply_filters(txs: List<Transaction>, min_amount: Float, target_day: String) -> List<Transaction>
+    var kept: List<Transaction> = []
+    for t in txs
+        if t.amount < min_amount
+            continue
+        if not target_day.is_empty()
+            let day = format_date(t.timestamp_secs)
+            if day != target_day
+                continue
+        kept.push(t)
+    return kept

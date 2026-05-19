@@ -1,9 +1,12 @@
 # Generated reports (default cwd output)
-report-*.csv
+aggregates-*.csv
+accounts-*.csv
 report-*.json
+alerts-*.txt
 reports/
 
 # Manifest / audit dumps used while developing
+_manifest.json
 manifest.json
 
 # Python bytecode (if anyone runs the transpiled code directly)
