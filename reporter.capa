@@ -160,11 +160,12 @@ fun run(
     let all = read_transactions(read_fs, opts.input_path)?
     log.info("parsed ${all.length()} transactions")
 
-    var watchlist = default_watchlist()
-    if not opts.watchlist_path.is_empty()
-        let loaded = load_watchlist(read_fs, opts.watchlist_path)?
-        log.info("loaded ${loaded.length()} watchlist prefix(es) from ${opts.watchlist_path}")
-        watchlist = loaded
+    let watchlist = match opts.watchlist_path.is_empty()
+        true  -> default_watchlist()
+        false ->
+            let loaded = load_watchlist(read_fs, opts.watchlist_path)?
+            log.info("loaded ${loaded.length()} watchlist prefix(es) from ${opts.watchlist_path}")
+            loaded
 
     let kept = apply_filters(all, opts.min_amount, opts.target_day)
     if kept.length() != all.length()
