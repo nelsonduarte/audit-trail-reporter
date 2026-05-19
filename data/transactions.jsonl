@@ -1,0 +1,10 @@
+{"id":"tx-2026-001","timestamp":"2026-05-18T08:14:33Z","amount":75.5,"currency":"EUR","from":"acc-1001","to":"acc-2342","kind":"card"}
+{"id":"tx-2026-002","timestamp":"2026-05-18T09:22:15Z","amount":1500.0,"currency":"EUR","from":"acc-1001","to":"acc-7811","kind":"transfer"}
+{"id":"tx-2026-003","timestamp":"2026-05-18T10:05:00Z","amount":42.0,"currency":"USD","from":"acc-1001","to":"acc-2342","kind":"card"}
+{"id":"tx-2026-004","timestamp":"2026-05-18T11:30:00Z","amount":15000.0,"currency":"EUR","from":"acc-9999","to":"acc-7811","kind":"wire"}
+{"id":"tx-2026-005","timestamp":"2026-05-18T14:30:22Z","amount":500.0,"currency":"EUR","from":"acc-1001","to":"acc-WATCHLIST-01","kind":"transfer"}
+{"id":"tx-2026-006","timestamp":"2026-05-18T16:45:00Z","amount":250.0,"currency":"EUR","from":"acc-1001","to":"acc-2342","kind":"transfer"}
+{"id":"tx-2026-007","timestamp":"2026-05-19T08:00:00Z","amount":75.0,"currency":"EUR","from":"acc-1001","to":"acc-2342","kind":"card"}
+{"id":"tx-2026-008","timestamp":"2026-05-19T11:15:00Z","amount":8500.0,"currency":"EUR","from":"acc-1001","to":"acc-7811","kind":"wire"}
+{"id":"tx-2026-009","timestamp":"2026-05-19T14:20:00Z","amount":120.0,"currency":"USD","from":"acc-1001","to":"acc-WATCHLIST-02","kind":"card"}
+{"id":"tx-2026-010","timestamp":"2026-05-19T18:00:00Z","amount":12000.0,"currency":"EUR","from":"acc-1001","to":"acc-WATCHLIST-01","kind":"wire"}

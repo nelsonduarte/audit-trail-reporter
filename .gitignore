@@ -1,0 +1,22 @@
+# Generated reports
+out/
+
+# Transpilation artefacts
+_reporter.py
+*.transpiled.py
+
+# Manifest / audit dumps used while developing
+manifest.json
+
+# Python bytecode (if anyone runs the transpiled code directly)
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

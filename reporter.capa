@@ -1,0 +1,426 @@
+// reporter.capa
+//
+// Audit Trail Reporter. Reads a JSONL transaction log, classifies
+// each transaction by risk, aggregates by day + category, and emits
+// two report files: a CSV summary and a JSON detail. Designed as a
+// real demo of Capa beyond toy examples: every capability the
+// program holds is visible in the manifest, and every error path
+// is typed.
+//
+// Audit summary of this program (see --manifest):
+//   - read_transactions:  [Fs]
+//   - main:               [Stdio, Fs, Env, Clock]
+//   - run:                [Logger, Fs]
+//   - everything else:    no capabilities (pure)
+
+import capa_cli.parser
+import capa_datetime.datetime
+import capa_log.log
+import capa_log.stdio_logger
+
+// =========================================================
+// Domain types
+// =========================================================
+
+pub type Transaction {
+    id: String,
+    timestamp_secs: Float,
+    amount: Float,
+    currency: String,
+    from_account: String,
+    to_account: String,
+    kind: String
+}
+
+pub type RiskCategory =
+    Critical
+    High
+    Medium
+    Low
+
+pub type ClassifiedTx {
+    tx: Transaction,
+    risk: RiskCategory,
+    flagged_reason: Option<String>
+}
+
+pub type DailyAggregate {
+    day: String,
+    category: String,
+    count: Int,
+    total_amount: Float
+}
+
+pub type ReportError =
+    JsonError(String)
+    IoFailed(String)
+    BadArgs(String)
+
+pub type Options {
+    input_path: String,
+    output_dir: String,
+    min_amount: Float,
+    target_day: String,
+    verbose: Bool
+}
+
+// =========================================================
+// Risk policy
+// =========================================================
+//
+// Centralised so the README can quote a single rule block.
+// A real deployment would load these from a policy file; for
+// the demo we hard-code so the audit story is self-contained.
+
+const WATCHLIST_PREFIX: String = "acc-WATCHLIST"
+const CRITICAL_AMOUNT: Float = 10000.0
+const HIGH_AMOUNT:     Float = 1000.0
+const MEDIUM_AMOUNT:   Float = 100.0
+
+fun classify(tx: Transaction) -> ClassifiedTx
+    if tx.to_account.starts_with(WATCHLIST_PREFIX)
+        return ClassifiedTx {
+            tx: tx,
+            risk: Critical,
+            flagged_reason: Some("destination '${tx.to_account}' on watchlist")
+        }
+    if tx.amount >= CRITICAL_AMOUNT
+        return ClassifiedTx {
+            tx: tx,
+            risk: Critical,
+            flagged_reason: Some("amount ${tx.amount} >= ${CRITICAL_AMOUNT}")
+        }
+    if tx.amount >= HIGH_AMOUNT
+        return ClassifiedTx { tx: tx, risk: High,   flagged_reason: None }
+    if tx.amount >= MEDIUM_AMOUNT
+        return ClassifiedTx { tx: tx, risk: Medium, flagged_reason: None }
+    return ClassifiedTx { tx: tx, risk: Low, flagged_reason: None }
+
+fun risk_name(r: RiskCategory) -> String
+    return match r
+        Critical -> "Critical"
+        High     -> "High"
+        Medium   -> "Medium"
+        Low      -> "Low"
+
+// =========================================================
+// CLI
+// =========================================================
+
+fun build_schema() -> ArgSchema
+    var positionals: List<Positional> = []
+    positionals.push(Positional {
+        name: "input",
+        help: "path to a JSONL file of transactions"
+    })
+    var flags: List<Flag> = []
+    flags.push(Flag {
+        long: "verbose", short: "v",
+        help: "enable DEBUG-level logging"
+    })
+    var opts: List<Opt> = []
+    opts.push(Opt {
+        long: "output-dir", short: "o",
+        help: "directory for report files (default: out)",
+        required: false
+    })
+    opts.push(Opt {
+        long: "min-amount", short: "",
+        help: "drop transactions below this amount (default: 0)",
+        required: false
+    })
+    opts.push(Opt {
+        long: "date", short: "d",
+        help: "restrict to a single YYYY-MM-DD day (default: all)",
+        required: false
+    })
+    return ArgSchema {
+        program: "audit-trail-reporter",
+        summary: "produce daily risk aggregates from a transaction log",
+        positionals: positionals,
+        flags: flags,
+        options: opts
+    }
+
+fun resolve_options(parsed: ParsedArgs) -> Result<Options, ReportError>
+    let input = match parsed.positionals.get("input")
+        Some(s) -> s
+        None    -> return Err(BadArgs("missing input path"))
+    let out_dir = match parsed.options.get("output-dir")
+        Some(s) -> s
+        None    -> "out"
+    let min_str = match parsed.options.get("min-amount")
+        Some(s) -> s
+        None    -> "0"
+    let min_amount = match parse_float(min_str)
+        Some(f) -> f
+        None    -> return Err(BadArgs("--min-amount must be a number, got '${min_str}'"))
+    let day = match parsed.options.get("date")
+        Some(s) -> s
+        None    -> ""
+    let verbose = match parsed.flags.get("verbose")
+        Some(b) -> b
+        None    -> false
+    return Ok(Options {
+        input_path: input,
+        output_dir: out_dir,
+        min_amount: min_amount,
+        target_day: day,
+        verbose: verbose
+    })
+
+// =========================================================
+// JSONL parsing
+// =========================================================
+
+fun read_transactions(fs: Fs, path: String) -> Result<List<Transaction>, ReportError>
+    let body = match fs.read(path)
+        Ok(s)  -> s
+        Err(_) -> return Err(IoFailed("cannot read input '${path}'"))
+    var out: List<Transaction> = []
+    var line_no = 0
+    for line in body.split("\n")
+        line_no = line_no + 1
+        let trimmed = line.trim()
+        if trimmed.is_empty()
+            continue
+        let jv = match parse_json(trimmed)
+            Ok(v)  -> v
+            Err(e) -> return Err(JsonError("line ${line_no}: ${e}"))
+        let tx = parse_transaction(jv, line_no)?
+        out.push(tx)
+    return Ok(out)
+
+fun parse_transaction(jv: JsonValue, line_no: Int) -> Result<Transaction, ReportError>
+    let obj = match jv.as_object()
+        Some(o) -> o
+        None    -> return Err(JsonError("line ${line_no}: expected JSON object"))
+    let id        = extract_string(obj, "id", line_no)?
+    let ts_str    = extract_string(obj, "timestamp", line_no)?
+    let amount    = extract_num(obj, "amount", line_no)?
+    let currency  = extract_string(obj, "currency", line_no)?
+    let from_acct = extract_string(obj, "from", line_no)?
+    let to_acct   = extract_string(obj, "to", line_no)?
+    let kind      = extract_string(obj, "kind", line_no)?
+    let ts = match parse_iso8601(ts_str)
+        Ok(secs) -> secs
+        Err(_)   -> return Err(JsonError("line ${line_no}: invalid timestamp '${ts_str}'"))
+    return Ok(Transaction {
+        id: id,
+        timestamp_secs: ts,
+        amount: amount,
+        currency: currency,
+        from_account: from_acct,
+        to_account: to_acct,
+        kind: kind
+    })
+
+fun extract_string(obj: Map<String, JsonValue>, key: String, line_no: Int) -> Result<String, ReportError>
+    match obj.get(key)
+        None     -> return Err(JsonError("line ${line_no}: missing field '${key}'"))
+        Some(jv) ->
+            match jv.as_string()
+                Some(s) -> return Ok(s)
+                None    -> return Err(JsonError("line ${line_no}: field '${key}' must be a string"))
+
+fun extract_num(obj: Map<String, JsonValue>, key: String, line_no: Int) -> Result<Float, ReportError>
+    match obj.get(key)
+        None     -> return Err(JsonError("line ${line_no}: missing field '${key}'"))
+        Some(jv) ->
+            match jv.as_num()
+                Some(n) -> return Ok(n)
+                None    -> return Err(JsonError("line ${line_no}: field '${key}' must be a number"))
+
+// =========================================================
+// Aggregation
+// =========================================================
+
+fun aggregate(classified: List<ClassifiedTx>) -> List<DailyAggregate>
+    var counts: Map<String, Int> = new_map()
+    var sums: Map<String, Float> = new_map()
+    var key_order: List<String> = []
+    for c in classified
+        let day = format_date(c.tx.timestamp_secs)
+        let cat = risk_name(c.risk)
+        let key = "${day}|${cat}"
+        if not counts.contains_key(key)
+            key_order.push(key)
+            counts.set(key, 0)
+            sums.set(key, 0.0)
+        let cur_count = match counts.get(key)
+            Some(n) -> n
+            None    -> 0
+        counts.set(key, cur_count + 1)
+        let cur_sum = match sums.get(key)
+            Some(s) -> s
+            None    -> 0.0
+        sums.set(key, cur_sum + c.tx.amount)
+
+    var out: List<DailyAggregate> = []
+    for key in key_order
+        let parts = key.split("|")
+        let day = match parts.get(0)
+            Some(d) -> d
+            None    -> "?"
+        let cat = match parts.get(1)
+            Some(c) -> c
+            None    -> "?"
+        let n = match counts.get(key)
+            Some(v) -> v
+            None    -> 0
+        let total = match sums.get(key)
+            Some(v) -> v
+            None    -> 0.0
+        out.push(DailyAggregate {
+            day: day,
+            category: cat,
+            count: n,
+            total_amount: total
+        })
+    return out
+
+// =========================================================
+// Output emission
+// =========================================================
+
+fun aggregates_to_csv(aggs: List<DailyAggregate>) -> String
+    var out = "day,category,count,total_amount\n"
+    for a in aggs
+        out = out + "${a.day},${a.category},${a.count},${a.total_amount}\n"
+    return out
+
+fun report_to_json(
+    opts: Options,
+    classified: List<ClassifiedTx>,
+    aggs: List<DailyAggregate>,
+    generated_at: String
+) -> String
+    var fields: Map<String, JsonValue> = new_map()
+    fields.set("report_generated_at", JStr(generated_at))
+    fields.set("input_path", JStr(opts.input_path))
+    fields.set("total_transactions", JNum(to_float(classified.length())))
+    fields.set("min_amount_filter", JNum(opts.min_amount))
+    fields.set("target_day_filter", JStr(opts.target_day))
+
+    var aggs_json: List<JsonValue> = []
+    for a in aggs
+        var row: Map<String, JsonValue> = new_map()
+        row.set("day", JStr(a.day))
+        row.set("category", JStr(a.category))
+        row.set("count", JNum(to_float(a.count)))
+        row.set("total_amount", JNum(a.total_amount))
+        aggs_json.push(JObj(row))
+    fields.set("aggregates", JArr(aggs_json))
+
+    var flagged_json: List<JsonValue> = []
+    for c in classified
+        match c.flagged_reason
+            None -> ()
+            Some(reason) ->
+                var f: Map<String, JsonValue> = new_map()
+                f.set("id", JStr(c.tx.id))
+                f.set("amount", JNum(c.tx.amount))
+                f.set("currency", JStr(c.tx.currency))
+                f.set("to_account", JStr(c.tx.to_account))
+                f.set("risk", JStr(risk_name(c.risk)))
+                f.set("reason", JStr(reason))
+                flagged_json.push(JObj(f))
+    fields.set("flagged", JArr(flagged_json))
+    return to_json(JObj(fields))
+
+// =========================================================
+// Main pipeline
+// =========================================================
+
+fun apply_filters(all: List<Transaction>, opts: Options) -> List<Transaction>
+    var kept: List<Transaction> = []
+    for t in all
+        if t.amount < opts.min_amount
+            continue
+        if not opts.target_day.is_empty()
+            let day = format_date(t.timestamp_secs)
+            if day != opts.target_day
+                continue
+        kept.push(t)
+    return kept
+
+fun run(log: Logger, fs: Fs, opts: Options, generated_at: String) -> Result<Unit, ReportError>
+    log.info("reading ${opts.input_path}")
+    let all = read_transactions(fs, opts.input_path)?
+    log.info("parsed ${all.length()} transactions")
+
+    let kept = apply_filters(all, opts)
+    if kept.length() != all.length()
+        log.info("after filters: ${kept.length()} of ${all.length()} kept")
+
+    var classified: List<ClassifiedTx> = []
+    var critical_count = 0
+    for t in kept
+        let c = classify(t)
+        match c.flagged_reason
+            Some(reason) ->
+                log.warn("flagged ${c.tx.id}: ${reason}")
+                critical_count = critical_count + 1
+            None         -> log.debug("ok ${c.tx.id}: ${risk_name(c.risk)}")
+        classified.push(c)
+
+    let aggs = aggregate(classified)
+
+    let csv_path = "${opts.output_dir}/report-${generated_at}.csv"
+    let json_path = "${opts.output_dir}/report-${generated_at}.json"
+
+    match fs.write(csv_path, aggregates_to_csv(aggs))
+        Ok(_)  -> log.info("wrote ${csv_path}")
+        Err(_) -> return Err(IoFailed("cannot write '${csv_path}' (does the output directory exist?)"))
+
+    match fs.write(json_path, report_to_json(opts, classified, aggs, generated_at))
+        Ok(_)  -> log.info("wrote ${json_path}")
+        Err(_) -> return Err(IoFailed("cannot write '${json_path}'"))
+
+    if critical_count > 0
+        log.warn("${critical_count} flagged transaction(s) need review")
+
+    return Ok(())
+
+fun describe_error(stdio: Stdio, err: ReportError) -> Unit
+    match err
+        JsonError(msg) -> stdio.eprintln("parse error: ${msg}")
+        IoFailed(msg)  -> stdio.eprintln("io error: ${msg}")
+        BadArgs(msg)   -> stdio.eprintln("argument error: ${msg}")
+
+fun main(stdio: Stdio, fs: Fs, env: Env, clock: Clock)
+    let schema = build_schema()
+    let raw_args = env.args()
+    let parsed = match parse(schema, raw_args)
+        Ok(p) -> p
+        Err(HelpRequested) ->
+            stdio.println(format_help(schema))
+            return ()
+        Err(Missing(name)) ->
+            stdio.eprintln("error: missing required argument '${name}'")
+            stdio.eprintln("")
+            stdio.eprintln(format_help(schema))
+            return ()
+        Err(Unknown(arg)) ->
+            stdio.eprintln("error: unrecognised argument '${arg}'")
+            return ()
+        Err(NeedsValue(name)) ->
+            stdio.eprintln("error: option '${name}' needs a value")
+            return ()
+
+    let opts = match resolve_options(parsed)
+        Ok(o)  -> o
+        Err(e) ->
+            describe_error(stdio, e)
+            return ()
+
+    let min_level = match opts.verbose
+        true  -> DEBUG
+        false -> INFO
+    let log = make_stdio_logger(stdio, min_level)
+
+    let generated_at = format_date(clock.now_secs())
+
+    match run(log, fs, opts, generated_at)
+        Ok(_)  -> stdio.println("audit-trail-reporter: success")
+        Err(e) -> describe_error(stdio, e)
