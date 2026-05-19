@@ -121,7 +121,7 @@ fun build_schema() -> ArgSchema
     var opts: List<Opt> = []
     opts.push(Opt {
         long: "output-dir", short: "o",
-        help: "directory for report files (default: out)",
+        help: "directory for report files (default: current directory)",
         required: false
     })
     opts.push(Opt {
@@ -148,7 +148,7 @@ fun resolve_options(parsed: ParsedArgs) -> Result<Options, ReportError>
         None    -> return Err(BadArgs("missing input path"))
     let out_dir = match parsed.options.get("output-dir")
         Some(s) -> s
-        None    -> "out"
+        None    -> "."
     let min_str = match parsed.options.get("min-amount")
         Some(s) -> s
         None    -> "0"

@@ -44,34 +44,16 @@ Prerequisites: the Capa toolchain installed
 (`pip install capa-language` or a clone of the
 [Capa repo](https://github.com/nelsonduarte/capa-language)).
 
-**Linux / macOS**:
+From the repo root:
 
 ```bash
-mkdir -p out
-CAPA_PATH=libraries python -m capa --transpile reporter.capa > _reporter.py
-python _reporter.py data/transactions.jsonl
+capa --run reporter.capa -- data/transactions.jsonl
 ```
 
-**Windows PowerShell**:
-
-```powershell
-mkdir out
-$env:CAPA_PATH = "libraries"
-python -m capa --transpile reporter.capa | Out-File -Encoding utf8 _reporter.py
-python _reporter.py data\transactions.jsonl
-```
-
-Or, on either platform, use the bundled helper script:
-
-```bash
-./run.sh data/transactions.jsonl              # bash
-./run.ps1 data\transactions.jsonl              # PowerShell
-```
-
-The two-step transpile-then-run is needed because the
-`capa --run` mode does not currently pass extra arguments
-through to the underlying program; the helper script wraps
-the dance.
+That is the whole command. The `./libraries/` directory is
+picked up automatically (Capa's default fallback when no
+`CAPA_PATH` is set), and anything after `--` is forwarded to
+the program as `env.args()`.
 
 You should see:
 
@@ -103,7 +85,7 @@ Flags:
   -v, --verbose         enable DEBUG-level logging
 
 Options:
-  -o, --output-dir STR  directory for report files (default: out)
+  -o, --output-dir STR  directory for report files (default: cwd)
       --min-amount STR  drop transactions below this amount (default: 0)
   -d, --date STR        restrict to a single YYYY-MM-DD day (default: all)
 ```
@@ -112,13 +94,17 @@ Examples:
 
 ```bash
 # Verbose run with DEBUG logging.
-python _reporter.py data/transactions.jsonl --verbose
+capa --run reporter.capa -- data/transactions.jsonl --verbose
 
 # Single-day report.
-python _reporter.py data/transactions.jsonl --date 2026-05-19
+capa --run reporter.capa -- data/transactions.jsonl --date 2026-05-19
 
 # Only material transactions.
-python _reporter.py data/transactions.jsonl --min-amount 1000
+capa --run reporter.capa -- data/transactions.jsonl --min-amount 1000
+
+# Output to a specific directory (must exist).
+mkdir reports
+capa --run reporter.capa -- data/transactions.jsonl --output-dir reports
 ```
 
 ## The audit story
@@ -126,7 +112,7 @@ python _reporter.py data/transactions.jsonl --min-amount 1000
 This is what makes the demo *Capa*-specific. Run:
 
 ```bash
-CAPA_PATH=libraries python -m capa --manifest reporter.capa
+capa --manifest reporter.capa
 ```
 
 The manifest emits the authority each function holds. The
@@ -214,9 +200,9 @@ ships small:
   shape; it is not vendored here to keep the demo
   self-contained and offline).
 - **Output directory must exist**. Capa's `Fs` capability
-  exposes `read` and `write` but not `mkdir`; create `out/`
-  manually before running, or pass `--output-dir .` to write
-  to the current directory.
+  exposes `read` and `write` but not `mkdir`; if you pass
+  `--output-dir reports/`, create `reports/` manually first.
+  The default is the current directory, which already exists.
 - **No streaming**. The whole input file is read into memory
   and parsed line-by-line. For a million-line log this would
   be replaced by a line-iterator on the `Fs` cap (planned in

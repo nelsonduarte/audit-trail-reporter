@@ -1,9 +1,7 @@
-# Generated reports
-out/
-
-# Transpilation artefacts
-_reporter.py
-*.transpiled.py
+# Generated reports (default cwd output)
+report-*.csv
+report-*.json
+reports/
 
 # Manifest / audit dumps used while developing
 manifest.json
