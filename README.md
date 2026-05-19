@@ -44,14 +44,34 @@ Prerequisites: the Capa toolchain installed
 (`pip install capa-language` or a clone of the
 [Capa repo](https://github.com/nelsonduarte/capa-language)).
 
-```bash
-# Make the output directory the program will write to.
-mkdir -p out
+**Linux / macOS**:
 
-# Transpile + run. The intermediate Python file is in .gitignore.
+```bash
+mkdir -p out
 CAPA_PATH=libraries python -m capa --transpile reporter.capa > _reporter.py
 python _reporter.py data/transactions.jsonl
 ```
+
+**Windows PowerShell**:
+
+```powershell
+mkdir out
+$env:CAPA_PATH = "libraries"
+python -m capa --transpile reporter.capa | Out-File -Encoding utf8 _reporter.py
+python _reporter.py data\transactions.jsonl
+```
+
+Or, on either platform, use the bundled helper script:
+
+```bash
+./run.sh data/transactions.jsonl              # bash
+./run.ps1 data\transactions.jsonl              # PowerShell
+```
+
+The two-step transpile-then-run is needed because the
+`capa --run` mode does not currently pass extra arguments
+through to the underlying program; the helper script wraps
+the dance.
 
 You should see:
 
