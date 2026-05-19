@@ -1,10 +1,8 @@
 # audit-trail-reporter package manifest.
 #
-# capa_log is fetched from its standalone repo and materialised
-# under ./vendor/ by `capa install`. capa_cli and capa_datetime
-# still vendor by hand under ./libraries/ (path-source deps)
-# until those seed libraries are also extracted; both forms work
-# side-by-side.
+# All three seed libraries are now standalone repos consumed
+# via the package manager. `capa install` materialises them
+# under ./vendor/.
 
 [package]
 name = "audit-trail-reporter"
@@ -12,6 +10,6 @@ version = "0.2.0"
 capa = ">=0.8.4"
 
 [dependencies]
-capa_cli      = { path = "libraries/capa_cli" }
-capa_datetime = { path = "libraries/capa_datetime" }
-capa_log      = { git = "https://github.com/nelsonduarte/capa_log", tag = "v0.1" }
+capa_cli      = { git = "https://github.com/nelsonduarte/capa_cli",      tag = "v0.1" }
+capa_datetime = { git = "https://github.com/nelsonduarte/capa_datetime", tag = "v0.1" }
+capa_log      = { git = "https://github.com/nelsonduarte/capa_log",      tag = "v0.1" }
