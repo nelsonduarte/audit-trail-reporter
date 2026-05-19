@@ -248,11 +248,14 @@ deliberately tight:
   for daily exchange rates.
 - **Watchlist is exact-prefix match**. No regex, no fuzzy
   matching, no Unicode normalisation.
-- **`Fs.restrict_to("data/")` is a string-prefix check**. A
-  symlinked path or a `data/../etc/passwd` traversal would
-  bypass it; the v1 attenuation is not the full POSIX-aware
-  containment a hostile setting needs. The Capa runtime ticket
-  for proper path canonicalisation tracks this.
+- **TOCTOU race on `Fs.restrict_to`**. The Capa runtime
+  canonicalises paths through `os.path.realpath` (resolves
+  `..` and symlinks) before comparing, so `data/../etc/passwd`
+  and a symlink pointing outside `data/` are both denied.
+  A symlink swap *between* the `allows()` check and the
+  underlying `open()` can still be exploited in a hostile
+  setting; fully closing that gap requires open-at-dirfd
+  semantics.
 
 ## License
 
