@@ -1,0 +1,2 @@
+{"id":"tx-2026-001","timestamp":"2026-05-13T08:14:33Z","amount":75.5,"currency":"EUR","from":"acc-1001","to":"acc-2342","kind":"card"}
+{"id":"tx-2026-002","timestamp":"2026-05-13T10:22:15Z","amount":250.0,"currency":"EUR","from":"acc-1002","to":"acc-2342","kind":"transfer"}

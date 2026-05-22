@@ -137,6 +137,22 @@ mkdir reports
 capa --run reporter.capa -- data/transactions.jsonl --output-dir reports
 ```
 
+### Wasm backend
+
+The same source builds under Capa's WebAssembly backend. The
+included `data/tiny.jsonl` is a two-record fixture sized to
+fit Capa's current 64KB linear-memory budget:
+
+```bash
+capa --wasm --run reporter.capa -- data/tiny.jsonl
+```
+
+The full `data/transactions.jsonl` (37 records) exceeds that
+budget today and traps with an out-of-bounds memory access
+mid-classification. The fix is a `memory.grow` pass in the
+Capa Wasm backend; until that lands, the Python build is the
+production path and the Wasm build is a structural smoke test.
+
 ## The audit story
 
 Run `capa --manifest reporter.capa` and the surface looks like:
