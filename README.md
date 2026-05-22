@@ -139,19 +139,22 @@ capa --run reporter.capa -- data/transactions.jsonl --output-dir reports
 
 ### Wasm backend
 
-The same source builds under Capa's WebAssembly backend. The
-included `data/tiny.jsonl` is a two-record fixture sized to
-fit Capa's current 64KB linear-memory budget:
+The same source builds under Capa's WebAssembly backend and
+runs end-to-end on the full 37-record dataset:
 
 ```bash
-capa --wasm --run reporter.capa -- data/tiny.jsonl
+capa --wasm --run reporter.capa -- data/transactions.jsonl
 ```
 
-The full `data/transactions.jsonl` (37 records) exceeds that
-budget today and traps with an out-of-bounds memory access
-mid-classification. The fix is a `memory.grow` pass in the
-Capa Wasm backend; until that lands, the Python build is the
-production path and the Wasm build is a structural smoke test.
+The bundled `data/tiny.jsonl` (two records) is a faster smoke
+test for the Wasm path.
+
+Rule evaluation under Wasm currently flags fewer transactions
+than the Python reference path (the threshold + structuring
+rules fire but watchlist + velocity don't); only the threshold
+matches are emitted. The Python build remains the reference
+until that gap closes; the Wasm build is the cross-backend
+validation surface.
 
 ## The audit story
 
