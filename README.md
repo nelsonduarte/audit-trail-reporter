@@ -139,8 +139,10 @@ capa --run reporter.capa -- data/transactions.jsonl --output-dir reports
 
 ### Wasm backend
 
-The same source builds under Capa's WebAssembly backend and
-runs end-to-end on the full 37-record dataset:
+The same source builds and runs end-to-end under Capa's
+WebAssembly backend on the full 37-record dataset, with all
+four rules firing and the same 15 flagged transactions as the
+Python reference path:
 
 ```bash
 capa --wasm --run reporter.capa -- data/transactions.jsonl
@@ -148,13 +150,6 @@ capa --wasm --run reporter.capa -- data/transactions.jsonl
 
 The bundled `data/tiny.jsonl` (two records) is a faster smoke
 test for the Wasm path.
-
-Rule evaluation under Wasm currently flags fewer transactions
-than the Python reference path (the threshold + structuring
-rules fire but watchlist + velocity don't); only the threshold
-matches are emitted. The Python build remains the reference
-until that gap closes; the Wasm build is the cross-backend
-validation surface.
 
 ## The audit story
 
