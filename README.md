@@ -151,6 +151,17 @@ capa --wasm --run reporter.capa -- data/transactions.jsonl
 The bundled `data/tiny.jsonl` (two records) is a faster smoke
 test for the Wasm path.
 
+The same source also builds as a Component Model `.wasm`
+artifact with the canonical-ABI lowering for every imported
+capability method (`Stdio`, `Fs`, `Env`, `Clock`, `Json`):
+
+```bash
+capa --wasm --component --output reporter.wasm reporter.capa
+```
+
+The resulting `.wasm` is consumable by any Component-Model-
+aware runtime and ships the WIT spec embedded in the binary.
+
 ## The audit story
 
 Run `capa --manifest reporter.capa` and the surface looks like:
