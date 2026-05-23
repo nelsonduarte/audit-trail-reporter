@@ -153,7 +153,7 @@ test for the Wasm path.
 
 The same source also builds as a Component Model `.wasm`
 artifact with the canonical-ABI lowering for every imported
-capability method (`Stdio`, `Fs`, `Env`, `Clock`, `Json`):
+capability method (`Stdio`, `Fs`, `Env`, `Clock`):
 
 ```bash
 capa --wasm --component --output reporter.wasm reporter.capa
@@ -161,6 +161,17 @@ capa --wasm --component --output reporter.wasm reporter.capa
 
 The resulting `.wasm` is consumable by any Component-Model-
 aware runtime and ships the WIT spec embedded in the binary.
+
+And the artifact runs end-to-end under an external Component
+Model runtime via `capa --wasm --component --run`, with the
+same 15 flagged transactions as the Python reference path.
+JSON is parsed entirely inside the guest module (Capa-source
+parser bundled into the artifact), so no `capa:host/json`
+import is emitted:
+
+```bash
+capa --wasm --component --run reporter.capa -- data/transactions.jsonl
+```
 
 ## The audit story
 
